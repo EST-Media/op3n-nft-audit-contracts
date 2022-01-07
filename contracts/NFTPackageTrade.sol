@@ -33,13 +33,12 @@ contract NFTPackageTrade is Ownable, Initializable, INFTPackageTrade {
     using SafeERC20 for IERC20;
     using SafeNFTPackage for INFTPackage;
 
-    address private _feeReceiver;
     mapping(address => bool) private verifiers;
+    mapping(address => address) private projectReceivers;
 
     function initialize(address owner_) public initializer {
         transferOwnership(owner_);
         verifiers[owner_] = true;
-        _feeReceiver = owner_;
     }
 
     function setVerifier(address verifier_) external override onlyOwner {
@@ -50,8 +49,16 @@ contract NFTPackageTrade is Ownable, Initializable, INFTPackageTrade {
         verifiers[verifier_] = false;
     }
 
-    function setFeeReceiver(address feeReceiver_) external override onlyOwner {
-        _feeReceiver = feeReceiver_;
+    function setProjectReceiver(address project_, address receiver_) external override onlyOwner {
+        projectReceivers[project_] = receiver_;
+    }
+
+    function projectReceiver(address project_) public view override returns (address) {
+        if(projectReceivers[project_] == address(0)) {
+            return owner();
+        }
+
+        return projectReceivers[project_];
     }
 
     function hash(Order memory order) public view override returns (bytes32) {
@@ -84,22 +91,18 @@ contract NFTPackageTrade is Ownable, Initializable, INFTPackageTrade {
         address _verifier = recoverVerifier(order, sig);
         require(verifiers[_verifier], "403");
         
-        address payable creator = payable(INFTUpgradeable(order.project).creator());
+        address payable _projectReceiver = payable(projectReceiver(order.project));
         uint256 transferAmount = order.amount - order.fee;
         if (address(0) == order.token) {
-            require(order.amount <= msg.value);
-            Address.sendValue(creator, transferAmount);
-            if (0 < order.fee) {
-                Address.sendValue(creator, order.fee);
-            }
+            require(order.amount <= msg.value, "400");
+            Address.sendValue(_projectReceiver, transferAmount);
         }   else {
-            _transferToken(order.token, msg.sender, creator, transferAmount);
+            _transferToken(order.token, msg.sender, _projectReceiver, transferAmount);
             if (0 < msg.value) {
-                Address.sendValue(creator, msg.value);
+                Address.sendValue(_projectReceiver, msg.value);
             }
         }
         
         INFTPackage(order.project).safeMintTo(order.to, order.package, order.uri);
     }
-    uint256[50] private __gap;
 }

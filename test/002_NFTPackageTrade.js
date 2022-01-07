@@ -53,7 +53,7 @@ describe("NFTPackageTrade contract", function () {
       fee = ethers.utils.parseUnits("0", "ether");
     });
 
-    it("mints new token and sends amount to project creator", async function () {
+    it("mints new token and sends amount to owner", async function () {
       const orderHash = ethers.utils.solidityKeccak256(
         [
           "address",
@@ -81,7 +81,7 @@ describe("NFTPackageTrade contract", function () {
 
       const sig = await owner.signMessage(ethers.utils.arrayify(orderHash));
 
-      const projectOwnerBalance = await projectOwner.getBalance();
+      const ownerBalance = await owner.getBalance();
       expect(await projectContract.balanceOf(minter.address)).to.equal(0);
       await contract
         .connect(minter)
@@ -102,10 +102,73 @@ describe("NFTPackageTrade contract", function () {
         );
 
       expect(await projectContract.ownerOf(1)).to.equal(minter.address);
-      expect(await projectOwner.getBalance()).to.equal(
-        projectOwnerBalance.add(amount)
-      );
+      expect(await owner.getBalance()).to.equal(ownerBalance.add(amount));
       expect(await projectContract.balanceOf(minter.address)).to.equal(1);
+    });
+
+    describe("when projectReceiver set", function () {
+      let projectReceiver;
+      beforeEach(async function () {
+        projectReceiver = addrs[5];
+        await contract.setProjectReceiver(
+          projectContract.address,
+          projectReceiver.address
+        );
+      });
+      it("sends amount to projectReceiver", async function () {
+        const orderHash = ethers.utils.solidityKeccak256(
+          [
+            "address",
+            "uint256",
+            "address",
+            "uint256",
+            "uint256",
+            "address",
+            "address",
+            "string",
+            "string",
+          ],
+          [
+            minter.address,
+            0,
+            tokenAddress,
+            amount,
+            fee,
+            projectContract.address,
+            minter.address,
+            "",
+            "P1",
+          ]
+        );
+
+        const sig = await owner.signMessage(ethers.utils.arrayify(orderHash));
+
+        const projectReceiverBalance = await projectReceiver.getBalance();
+        expect(await projectContract.balanceOf(minter.address)).to.equal(0);
+        await contract
+          .connect(minter)
+          .mint(
+            [
+              tokenAddress,
+              amount,
+              fee,
+              projectContract.address,
+              minter.address,
+              "",
+              "P1",
+            ],
+            sig,
+            {
+              value: amount,
+            }
+          );
+
+        expect(await projectContract.ownerOf(1)).to.equal(minter.address);
+        expect(await projectReceiver.getBalance()).to.equal(
+          projectReceiverBalance.add(amount)
+        );
+        expect(await projectContract.balanceOf(minter.address)).to.equal(1);
+      });
     });
 
     describe("when invalid verifier", function () {
@@ -231,7 +294,7 @@ describe("NFTPackageTrade contract", function () {
         await tokenContract.connect(minter).approve(contract.address, amount);
       });
 
-      it("mints new nft and sends token amount to project creator", async function () {
+      it("mints new nft and sends token amount to owner", async function () {
         const hash = ethers.utils.solidityKeccak256(
           [
             "address",
@@ -259,9 +322,7 @@ describe("NFTPackageTrade contract", function () {
         const sig = await owner.signMessage(ethers.utils.arrayify(hash));
 
         const minterBalance = await tokenContract.balanceOf(minter.address);
-        const projectOwnerBalance = await tokenContract.balanceOf(
-          projectOwner.address
-        );
+        const ownerBalance = await tokenContract.balanceOf(owner.address);
         await contract
           .connect(minter)
           .mint(
@@ -281,8 +342,8 @@ describe("NFTPackageTrade contract", function () {
         expect(await tokenContract.balanceOf(minter.address)).to.equal(
           minterBalance.sub(amount)
         );
-        expect(await tokenContract.balanceOf(projectOwner.address)).to.equal(
-          projectOwnerBalance.add(amount)
+        expect(await tokenContract.balanceOf(owner.address)).to.equal(
+          ownerBalance.add(amount)
         );
       });
 
