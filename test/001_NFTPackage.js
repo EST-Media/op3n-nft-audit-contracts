@@ -14,6 +14,7 @@ describe("NFTPackage contract", function () {
     await contract.initialize("NFT Package", "NFTPackage", owner.address);
     await contract.setPackage(["P1", "PD1", 2, "#09f"]);
     await contract.setPackage(["P2", "PD2", 1, "#09f"]);
+    await contract.setPackage(["P3", "PD3", 4, ""]);
   });
 
   describe("#initialize", function () {
@@ -39,6 +40,46 @@ describe("NFTPackage contract", function () {
       expect(pkg.desc).to.equal("PD2");
       expect(pkg.totalSupply).to.equal(1);
       expect(pkg.cover).to.equal("#09f");
+    });
+  });
+
+  describe("#setPackage", function () {
+    it("creates or updates", async function () {
+      await contract.setPackage(["P4", "PD4", 2, ""]);
+      let pkg = await contract.packages("P4");
+      expect(pkg.name).to.equal("P4");
+      expect(pkg.desc).to.equal("PD4");
+      expect(pkg.totalSupply).to.equal(2);
+
+      await contract.setPackage(["P3", "PD31", 22, "ABC"]);
+      pkg = await contract.packages("P3");
+      expect(pkg.name).to.equal("P3");
+      expect(pkg.desc).to.equal("PD31");
+      expect(pkg.totalSupply).to.equal(22);
+      expect(pkg.cover).to.equal("ABC");
+    });
+
+    describe("when package minted", function () {
+      it("reverts", async function () {
+        await contract.mintTo(addrs[3].address, "P3", "");
+        await expect(
+          contract.setPackage(["P3", "PD31", 22, "ABC"])
+        ).to.be.revertedWith("400");
+
+        await contract.setPackage(["P4", "PD4", 2, ""]);
+        const pkg = await contract.packages("P4");
+        expect(pkg.name).to.equal("P4");
+        expect(pkg.desc).to.equal("PD4");
+        expect(pkg.totalSupply).to.equal(2);
+      });
+    });
+
+    describe("when caller does not owner", function () {
+      it("reverts", async function () {
+        await expect(
+          contract.connect(addrs[1]).setPackage(["P3", "PD31", 22, "ABC"])
+        ).to.be.revertedWith("403");
+      });
     });
   });
 

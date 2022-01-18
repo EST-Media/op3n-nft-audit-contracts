@@ -27,6 +27,17 @@ describe("NFTPackageTrade contract", function () {
     let tokenAddress;
     let amount;
     let fee;
+    const sigTypes = [
+      "address",
+      "uint256",
+      "address",
+      "uint256",
+      "uint256",
+      "address",
+      "address",
+      "string",
+      "string",
+    ];
 
     beforeEach(async function () {
       projectOwner = addrs[0];
@@ -54,46 +65,34 @@ describe("NFTPackageTrade contract", function () {
     });
 
     it("mints new token and sends amount to owner", async function () {
-      const orderHash = ethers.utils.solidityKeccak256(
-        [
-          "address",
-          "uint256",
-          "address",
-          "uint256",
-          "uint256",
-          "address",
-          "address",
-          "string",
-          "string",
-        ],
-        [
-          minter.address,
-          0,
-          tokenAddress,
-          amount,
-          fee,
-          projectContract.address,
-          minter.address,
-          "",
-          "P1",
-        ]
-      );
+      const salt = new Date().getTime();
+      const orderHash = ethers.utils.solidityKeccak256(sigTypes, [
+        minter.address,
+        salt,
+        tokenAddress,
+        amount,
+        fee,
+        projectContract.address,
+        minter.address,
+        "P1",
+        "",
+      ]);
 
       const sig = await owner.signMessage(ethers.utils.arrayify(orderHash));
-
       const ownerBalance = await owner.getBalance();
       expect(await projectContract.balanceOf(minter.address)).to.equal(0);
       await contract
         .connect(minter)
         .mint(
           [
+            salt,
             tokenAddress,
             amount,
             fee,
             projectContract.address,
             minter.address,
-            "",
             "P1",
+            "",
           ],
           sig,
           {
@@ -104,58 +103,60 @@ describe("NFTPackageTrade contract", function () {
       expect(await projectContract.ownerOf(1)).to.equal(minter.address);
       expect(await owner.getBalance()).to.equal(ownerBalance.add(amount));
       expect(await projectContract.balanceOf(minter.address)).to.equal(1);
+      const hashOrderToSign = await contract
+        .connect(minter)
+        .hashOrderToSign([
+          salt,
+          tokenAddress,
+          amount,
+          fee,
+          projectContract.address,
+          minter.address,
+          "P1",
+          "",
+        ]);
+      expect(await contract.finalized(hashOrderToSign)).to.eq(true);
     });
 
-    describe("when projectReceiver set", function () {
-      let projectReceiver;
+    describe("when projectRecipient set", function () {
+      let projectRecipient;
       beforeEach(async function () {
-        projectReceiver = addrs[5];
-        await contract.setProjectReceiver(
+        projectRecipient = addrs[5];
+        await contract.setProjectRecipient(
           projectContract.address,
-          projectReceiver.address
+          projectRecipient.address
         );
       });
-      it("sends amount to projectReceiver", async function () {
-        const orderHash = ethers.utils.solidityKeccak256(
-          [
-            "address",
-            "uint256",
-            "address",
-            "uint256",
-            "uint256",
-            "address",
-            "address",
-            "string",
-            "string",
-          ],
-          [
-            minter.address,
-            0,
-            tokenAddress,
-            amount,
-            fee,
-            projectContract.address,
-            minter.address,
-            "",
-            "P1",
-          ]
-        );
+
+      it("sends amount to projectRecipient", async function () {
+        const salt = new Date().getTime();
+        const orderHash = ethers.utils.solidityKeccak256(sigTypes, [
+          minter.address,
+          salt,
+          tokenAddress,
+          amount,
+          fee,
+          projectContract.address,
+          minter.address,
+          "P1",
+          "",
+        ]);
 
         const sig = await owner.signMessage(ethers.utils.arrayify(orderHash));
-
-        const projectReceiverBalance = await projectReceiver.getBalance();
+        const projectRecipientBalance = await projectRecipient.getBalance();
         expect(await projectContract.balanceOf(minter.address)).to.equal(0);
         await contract
           .connect(minter)
           .mint(
             [
+              salt,
               tokenAddress,
               amount,
               fee,
               projectContract.address,
               minter.address,
-              "",
               "P1",
+              "",
             ],
             sig,
             {
@@ -164,39 +165,94 @@ describe("NFTPackageTrade contract", function () {
           );
 
         expect(await projectContract.ownerOf(1)).to.equal(minter.address);
-        expect(await projectReceiver.getBalance()).to.equal(
-          projectReceiverBalance.add(amount)
+        expect(await projectRecipient.getBalance()).to.equal(
+          projectRecipientBalance.add(amount)
         );
         expect(await projectContract.balanceOf(minter.address)).to.equal(1);
       });
     });
 
-    describe("when invalid verifier", function () {
-      it("reverts", async function () {
-        const hash = ethers.utils.solidityKeccak256(
-          [
-            "address",
-            "uint256",
-            "address",
-            "uint256",
-            "uint256",
-            "address",
-            "address",
-            "string",
-            "string",
-          ],
-          [
-            minter.address,
-            0,
-            tokenAddress,
-            amount,
-            fee,
-            projectContract.address,
-            minter.address,
-            "",
-            "P1",
-          ]
+    describe("when has fee", function () {
+      let projectRecipient;
+      let feeRecipient;
+
+      beforeEach(async function () {
+        fee = ethers.utils.parseUnits("0.35", "ether");
+        projectRecipient = addrs[5];
+        await contract.setProjectRecipient(
+          projectContract.address,
+          projectRecipient.address
         );
+        feeRecipient = addrs[4];
+        await contract.setFeeRecipient(feeRecipient.address);
+      });
+
+      it("sends amount - fee to projectRecipient, fee to feeRecipient", async function () {
+        const salt = new Date().getTime();
+        const orderHash = ethers.utils.solidityKeccak256(sigTypes, [
+          minter.address,
+          salt,
+          tokenAddress,
+          amount,
+          fee,
+          projectContract.address,
+          minter.address,
+          "P1",
+          "",
+        ]);
+
+        const sig = await owner.signMessage(ethers.utils.arrayify(orderHash));
+        const projectRecipientBalance = await projectRecipient.getBalance();
+        const feeRecipientBalance = await feeRecipient.getBalance();
+        expect(await projectContract.balanceOf(minter.address)).to.equal(0);
+        await contract
+          .connect(minter)
+          .mint(
+            [
+              salt,
+              tokenAddress,
+              amount,
+              fee,
+              projectContract.address,
+              minter.address,
+              "P1",
+              "",
+            ],
+            sig,
+            {
+              value: amount,
+            }
+          );
+
+        expect(await projectContract.ownerOf(1)).to.equal(minter.address);
+        expect(await projectContract.balanceOf(minter.address)).to.equal(1);
+        expect(await projectRecipient.getBalance()).to.equal(
+          projectRecipientBalance.add(amount.sub(fee))
+        );
+        expect(await feeRecipient.getBalance()).to.equal(
+          feeRecipientBalance.add(fee)
+        );
+        // expect(
+        //   await ethers.getDefaultProvider().getBalance(contract.address)
+        // ).to.equal(0);
+      });
+    });
+
+    describe("when fee is greater than amount", function () {
+      it("reverts 400", async function () {
+        const salt = new Date().getTime();
+        fee = ethers.utils.parseUnits("0.76", "ether");
+        const hash = ethers.utils.solidityKeccak256(sigTypes, [
+          salt,
+          minter.address,
+          tokenAddress,
+          amount,
+          fee,
+          projectContract.address,
+          minter.address,
+          "P1",
+          "",
+        ]);
         const sig = await addrs[10].signMessage(ethers.utils.arrayify(hash));
 
         await expect(
@@ -204,47 +260,36 @@ describe("NFTPackageTrade contract", function () {
             .connect(minter)
             .mint(
               [
+                salt,
                 tokenAddress,
                 amount,
                 fee,
                 projectContract.address,
                 minter.address,
-                "",
                 "P1",
+                "",
               ],
               sig,
               { value: amount }
             )
-        ).to.be.revertedWith("");
+        ).to.be.revertedWith("400");
       });
     });
 
-    describe("when tx value less than amount", function () {
-      it("reverts", async function () {
-        const hash = ethers.utils.solidityKeccak256(
-          [
-            "address",
-            "uint256",
-            "address",
-            "uint256",
-            "uint256",
-            "address",
-            "address",
-            "string",
-            "string",
-          ],
-          [
-            minter.address,
-            0,
-            tokenAddress,
-            amount,
-            fee,
-            projectContract.address,
-            minter.address,
-            "",
-            "P1",
-          ]
-        );
+    describe("when tx value less than amount and order token is zeroAddress", function () {
+      it("reverts 400", async function () {
+        const salt = new Date().getTime();
+        const hash = ethers.utils.solidityKeccak256(sigTypes, [
+          salt,
+          minter.address,
+          tokenAddress,
+          amount,
+          fee,
+          projectContract.address,
+          minter.address,
+          "p1",
+          "",
+        ]);
         const sig = await owner.signMessage(ethers.utils.arrayify(hash));
 
         await expect(
@@ -252,18 +297,154 @@ describe("NFTPackageTrade contract", function () {
             .connect(minter)
             .mint(
               [
+                salt,
                 tokenAddress,
                 amount,
                 fee,
                 projectContract.address,
                 minter.address,
-                "",
                 "P1",
+                "",
               ],
               sig,
               { value: ethers.utils.parseUnits("0.74", "ether") }
             )
-        ).to.be.revertedWith("");
+        ).to.be.revertedWith("400");
+      });
+    });
+
+    describe("when invalid verifier", function () {
+      it("reverts 401", async function () {
+        const salt = new Date().getTime();
+        const hash = ethers.utils.solidityKeccak256(sigTypes, [
+          minter.address,
+          salt,
+          tokenAddress,
+          amount,
+          fee,
+          projectContract.address,
+          minter.address,
+          "P1",
+          "",
+        ]);
+        const sig = await addrs[10].signMessage(ethers.utils.arrayify(hash));
+
+        await expect(
+          contract
+            .connect(minter)
+            .mint(
+              [
+                salt,
+                tokenAddress,
+                amount,
+                fee,
+                projectContract.address,
+                minter.address,
+                "P1",
+                "",
+              ],
+              sig,
+              { value: amount }
+            )
+        ).to.be.revertedWith("401");
+      });
+    });
+
+    describe("when sig was used", function () {
+      it("reverts 403", async function () {
+        const salt = new Date().getTime();
+        const hash = ethers.utils.solidityKeccak256(sigTypes, [
+          minter.address,
+          salt,
+          tokenAddress,
+          amount,
+          fee,
+          projectContract.address,
+          minter.address,
+          "P1",
+          "",
+        ]);
+        const sig = await owner.signMessage(ethers.utils.arrayify(hash));
+        await contract
+          .connect(minter)
+          .mint(
+            [
+              salt,
+              tokenAddress,
+              amount,
+              fee,
+              projectContract.address,
+              minter.address,
+              "P1",
+              "",
+            ],
+            sig,
+            { value: amount }
+          );
+
+        await expect(
+          contract
+            .connect(minter)
+            .mint(
+              [
+                salt,
+                tokenAddress,
+                amount,
+                fee,
+                projectContract.address,
+                minter.address,
+                "P1",
+                "",
+              ],
+              sig,
+              { value: amount }
+            )
+        ).to.be.revertedWith("403");
+      });
+    });
+
+    describe("when minter does not have enough amount", function () {
+      it("throw exception", async function () {
+        const salt = new Date().getTime();
+        const hash = ethers.utils.solidityKeccak256(sigTypes, [
+          minter.address,
+          salt,
+          tokenAddress,
+          amount,
+          fee,
+          projectContract.address,
+          minter.address,
+          "P1",
+          "",
+        ]);
+        const sig = await owner.signMessage(ethers.utils.arrayify(hash));
+        await minter.sendTransaction({
+          to: addrs[11].address,
+          value: (
+            await minter.getBalance()
+          ).sub(ethers.utils.parseUnits("0.63", "ether")),
+        });
+
+        try {
+          await contract
+            .connect(minter)
+            .mint(
+              [
+                salt,
+                tokenAddress,
+                amount,
+                fee,
+                projectContract.address,
+                minter.address,
+                "P1",
+                "",
+              ],
+              sig,
+              { value: amount }
+            );
+        } catch (error) {
+          expect(error.message).to.include("sender doesn\'t have enough funds to send tx");
+        }
       });
     });
 
@@ -294,31 +475,19 @@ describe("NFTPackageTrade contract", function () {
         await tokenContract.connect(minter).approve(contract.address, amount);
       });
 
-      it("mints new nft and sends token amount to owner", async function () {
-        const hash = ethers.utils.solidityKeccak256(
-          [
-            "address",
-            "uint256",
-            "address",
-            "uint256",
-            "uint256",
-            "address",
-            "address",
-            "string",
-            "string",
-          ],
-          [
-            minter.address,
-            0,
-            tokenAddress,
-            amount,
-            fee,
-            projectContract.address,
-            minter.address,
-            "",
-            "P1",
-          ]
-        );
+      it("mints new nft and sends token amount to projectRecipient", async function () {
+        const salt = new Date().getTime();
+        const hash = ethers.utils.solidityKeccak256(sigTypes, [
+          minter.address,
+          salt,
+          tokenAddress,
+          amount,
+          fee,
+          projectContract.address,
+          minter.address,
+          "P1",
+          "",
+        ]);
         const sig = await owner.signMessage(ethers.utils.arrayify(hash));
 
         const minterBalance = await tokenContract.balanceOf(minter.address);
@@ -327,13 +496,14 @@ describe("NFTPackageTrade contract", function () {
           .connect(minter)
           .mint(
             [
+              salt,
               tokenAddress,
               amount,
               fee,
               projectContract.address,
               minter.address,
-              "",
               "P1",
+              "",
             ],
             sig
           );
@@ -347,86 +517,76 @@ describe("NFTPackageTrade contract", function () {
         );
       });
 
-      describe("when token is not ERC20", function () {
-        it("reverts", async function () {
-          const hash = ethers.utils.solidityKeccak256(
-            [
-              "address",
-              "uint256",
-              "address",
-              "uint256",
-              "uint256",
-              "address",
-              "address",
-              "string",
-              "string",
-            ],
-            [
-              minter.address,
-              0,
-              addrs[6].address,
-              amount,
-              fee,
-              projectContract.address,
-              minter.address,
-              "",
-              "P1",
-            ]
-          );
-          const sig = await owner.signMessage(ethers.utils.arrayify(hash));
-
-          await expect(
-            contract
-              .connect(minter)
-              .mint(
-                [
-                  addrs[6].address,
-                  amount,
-                  fee,
-                  projectContract.address,
-                  minter.address,
-                  "",
-                  "P1",
-                ],
-                sig
-              )
-          ).to.be.revertedWith("Address: call to non-contract");
-        });
-      });
-
-      describe("when minter approve spending less than amount", function () {
-        it("reverts", async function () {
+      describe("when allowance amount is not enough", function () {
+        it("reverts ERC20", async function () {
           await tokenContract
             .connect(minter)
             .approve(
               contract.address,
-              ethers.utils.parseUnits("0.74", "ether")
+              amount.sub(ethers.utils.parseUnits("0.3", "ether"))
             );
 
-          const hash = ethers.utils.solidityKeccak256(
-            [
-              "address",
-              "uint256",
-              "address",
-              "uint256",
-              "uint256",
-              "address",
-              "address",
-              "string",
-              "string",
-            ],
-            [
-              minter.address,
-              0,
+          const salt = new Date().getTime();
+          const hash = ethers.utils.solidityKeccak256(sigTypes, [
+            minter.address,
+            salt,
+            tokenAddress,
+            amount,
+            fee,
+            projectContract.address,
+            minter.address,
+            "P1",
+            "",
+          ]);
+          const sig = await owner.signMessage(ethers.utils.arrayify(hash));
+          const hashOrderToSign = await contract
+            .connect(minter)
+            .hashOrderToSign([
+              salt,
               tokenAddress,
               amount,
               fee,
               projectContract.address,
               minter.address,
-              "",
               "P1",
-            ]
-          );
+              "",
+            ]);
+
+          expect(await contract.finalized(hashOrderToSign)).to.eq(false);
+          await expect(
+            contract
+              .connect(minter)
+              .mint(
+                [
+                  salt,
+                  tokenAddress,
+                  amount,
+                  fee,
+                  projectContract.address,
+                  minter.address,
+                  "P1",
+                  "",
+                ],
+                sig
+              )
+          ).to.be.revertedWith("ERC20: transfer amount exceeds allowance");
+        });
+      });
+
+      describe("when token is not ERC20", function () {
+        it("reverts SafeERC20: low-level call failed", async function () {
+          const salt = new Date().getTime();
+          const hash = ethers.utils.solidityKeccak256(sigTypes, [
+            minter.address,
+            salt,
+            contract.address,
+            amount,
+            fee,
+            projectContract.address,
+            minter.address,
+            "P1",
+            "",
+          ]);
           const sig = await owner.signMessage(ethers.utils.arrayify(hash));
 
           await expect(
@@ -434,17 +594,54 @@ describe("NFTPackageTrade contract", function () {
               .connect(minter)
               .mint(
                 [
-                  tokenAddress,
+                  salt,
+                  contract.address,
                   amount,
                   fee,
                   projectContract.address,
                   minter.address,
-                  "",
                   "P1",
+                  "",
                 ],
                 sig
               )
-          ).to.be.revertedWith("ERC20: transfer amount exceeds allowance");
+          ).to.be.revertedWith("SafeERC20: low-level call failed");
+        });
+
+        describe("when tokenAdress is non-contract", function () {
+          it("reverts Address: call to non-contract", async function () {
+            const salt = new Date().getTime();
+            const hash = ethers.utils.solidityKeccak256(sigTypes, [
+              minter.address,
+              salt,
+              addrs[6].address,
+              amount,
+              fee,
+              projectContract.address,
+              minter.address,
+              "P1",
+              "",
+            ]);
+            const sig = await owner.signMessage(ethers.utils.arrayify(hash));
+
+            await expect(
+              contract
+                .connect(minter)
+                .mint(
+                  [
+                    salt,
+                    addrs[6].address,
+                    amount,
+                    fee,
+                    projectContract.address,
+                    minter.address,
+                    "P1",
+                    "",
+                  ],
+                  sig
+                )
+            ).to.be.revertedWith("Address: call to non-contract");
+          });
         });
       });
     });

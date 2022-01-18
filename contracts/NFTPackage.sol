@@ -46,8 +46,8 @@ contract NFTPackage is NFTUpgradeable, INFTPackage {
     }
 
     function setPackage(NFTPackageConfig memory package_) public virtual override {
-        require(owner() == msg.sender);
-        require(0 == tokenCount());
+        require(owner() == msg.sender, "403");
+        require(0 == _packageTokenCount[package_.name], "400");
         
         packages[package_.name] = package_;
     }
@@ -65,9 +65,9 @@ contract NFTPackage is NFTUpgradeable, INFTPackage {
         require(packageTokenCount(pkg) < packages[pkg].totalSupply, "429");
         
         uint256 tokenId = tokenCount()+1;
+        _packageTokenCount[pkg] += 1;
         super._mint(to, tokenId, uri);
         _tokenPackage[tokenId] = pkg;
-        _packageTokenCount[pkg] += 1;
         emit Minted(to, tokenId, pkg);
     }
 }

@@ -33,52 +33,59 @@ contract NFTPackageTrade is Ownable, Initializable, INFTPackageTrade {
     using SafeERC20 for IERC20;
     using SafeNFTPackage for INFTPackage;
 
-    mapping(address => bool) private verifiers;
-    mapping(address => address) private projectReceivers;
+    mapping(bytes32 => bool) public finalized;
+    address payable private _feeRecipient;
+    mapping(address => bool) private _verifiers;
+    mapping(address => address) private _projectRecipients;
 
     function initialize(address owner_) public initializer {
         transferOwnership(owner_);
-        verifiers[owner_] = true;
+        _verifiers[owner_] = true;
+        _feeRecipient = payable(owner_);
     }
 
     function setVerifier(address verifier_) external override onlyOwner {
-        verifiers[verifier_] = true;
+        _verifiers[verifier_] = true;
     }
 
     function revokeVerifier(address verifier_) external override onlyOwner {
-        verifiers[verifier_] = false;
+        _verifiers[verifier_] = false;
+    }
+    
+    function setFeeRecipient(address feeRecipient_) external override onlyOwner {
+        _feeRecipient = payable(feeRecipient_);
     }
 
-    function setProjectReceiver(address project_, address receiver_) external override onlyOwner {
-        projectReceivers[project_] = receiver_;
+    function setProjectRecipient(address project_, address recipient_) external override onlyOwner {
+        _projectRecipients[project_] = recipient_;
     }
 
-    function projectReceiver(address project_) public view override returns (address) {
-        if(projectReceivers[project_] == address(0)) {
+    function projectRecipient(address project_) public view override returns (address) {
+        if(_projectRecipients[project_] == address(0)) {
             return owner();
         }
 
-        return projectReceivers[project_];
+        return _projectRecipients[project_];
     }
 
-    function hash(Order memory order) public view override returns (bytes32) {
+    function hashOrder(Order memory order) public view override returns (bytes32) {
         return keccak256(
             abi.encodePacked(
                 msg.sender,
-                INFTUpgradeable(order.project).balanceOf(order.to),
+                order.salt,
                 order.token,
                 order.amount,
                 order.fee,
                 order.project,
                 order.to,
-                order.uri,
-                order.package
+                order.package,
+                order.uri
             )
         );
     }
 
-    function recoverVerifier(Order memory order, bytes memory sig) public view override returns (address) {
-        return hash(order).toEthSignedMessageHash().recover(sig);
+    function hashOrderToSign(Order memory order) public view override returns (bytes32) {
+        return hashOrder(order).toEthSignedMessageHash();
     }
 
     function _transferToken(address token, address from, address to, uint256 amount) internal {
@@ -88,18 +95,29 @@ contract NFTPackageTrade is Ownable, Initializable, INFTPackageTrade {
     }
 
     function mint(Order memory order, bytes memory sig) public payable override {
-        address _verifier = recoverVerifier(order, sig);
-        require(verifiers[_verifier], "403");
-        
-        address payable _projectReceiver = payable(projectReceiver(order.project));
+        require(order.fee < order.amount, "400");
+        require(address(0) != order.token || order.amount <= msg.value, "400");
+
+        bytes32 _hashOrder = hashOrderToSign(order);
+        require(_verifiers[_hashOrder.recover(sig)], "401");
+    
+        require(!finalized[_hashOrder], "403");
+        finalized[_hashOrder] = true;
+
+        address payable _projectRecipient = payable(projectRecipient(order.project));
         uint256 transferAmount = order.amount - order.fee;
         if (address(0) == order.token) {
-            require(order.amount <= msg.value, "400");
-            Address.sendValue(_projectReceiver, transferAmount);
+            Address.sendValue(_projectRecipient, transferAmount);
+            if (0 < order.fee) {
+                Address.sendValue(_feeRecipient, order.fee);
+            }
         }   else {
-            _transferToken(order.token, msg.sender, _projectReceiver, transferAmount);
+            _transferToken(order.token, msg.sender, _projectRecipient, transferAmount);
+            if (0 < order.fee) {
+                _transferToken(order.token, msg.sender, _feeRecipient, order.fee);
+            }
             if (0 < msg.value) {
-                Address.sendValue(_projectReceiver, msg.value);
+                Address.sendValue(_projectRecipient, msg.value);
             }
         }
         
